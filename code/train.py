@@ -19,6 +19,11 @@ def get_filename(args, time: int, util_name=""):
         filename = util_name+"_"+filename
     return filename
 
+def get_batches():
+    # TO DO
+    pass
+
+
 if __name__ == "__main__":
     max_epochs = 20
     learning_rate = 0.0001
@@ -42,7 +47,7 @@ if __name__ == "__main__":
     eos_index = 6
     random.shuffle(train)
     optim = torch.optim.AdamW(lstm.parameters(), lr=learning_rate)
-    n_samples = train_size
+    n_samples = 100
     print(f"No of samples: {n_samples}\nNo of epochs: {max_epochs}\nLearning rate: {learning_rate}")
     for epoch in range(max_epochs):
         epoch_loss = 0
@@ -61,8 +66,7 @@ if __name__ == "__main__":
                 input_tensors[idx+1,:,:] = tensor
                 true_outputs_events[idx,0] = torch.tensor(val["type_event"], dtype=torch.int64)
                 true_outputs_time[idx,0] = val["time_since_last_event"]
-            # eos_tensor = torch.zeros(1,1,K)
-            # eos_tensor[:,:,eos_index]=1
+
             true_outputs_events[:,-1] = eos_index        
             no_of_timesteps = input_tensors.size()[0]
             total_loss = 0
@@ -73,7 +77,7 @@ if __name__ == "__main__":
                 temp = torch.squeeze(out[:,:,:-1], dim=0)
                 temp2 = true_outputs_events[idx,:]
                 categorical_loss = criterion_1(temp, temp2)
-                mse_loss = torch.sqrt(criterion_2(out, true_outputs_time[idx,:]))
+                mse_loss = torch.sqrt(criterion_2(out[:,:,-1], true_outputs_time[idx,:]))
                 loss = categorical_loss+mse_loss
                 total_loss += loss
             # print(f"Sample {sample_idx}, Loss: {total_loss}")   
