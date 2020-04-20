@@ -123,7 +123,6 @@ if __name__ == "__main__":
             no_of_timesteps = train_sample.size()[0]
             total_loss = 0
             for t in range(no_of_timesteps):
-                # input_tensor = torch.unsqueeze(input_tensors[idx,:,:], 0)                
                 out = lstm(torch.unsqueeze(train_sample[t,:,:], dim=0))
 
                 categorical_loss = criterion_1(torch.squeeze(out[:,:,:-1], dim=0), true_events[t,:])
@@ -134,38 +133,6 @@ if __name__ == "__main__":
             epoch_loss += total_loss     
             total_loss.backward()
             optim.step()
-        # for sample_idx in range(n_samples):           
-            # sample = train_samples[sample_idx]
-            # bos_tensor = torch.zeros(1,1,K)
-            # bos_tensor[:,:,bos_index]=1
-
-            # true_outputs_events = torch.zeros(len(sample)+1, 1, dtype=torch.int64)
-            # true_outputs_time = torch.zeros(len(sample)+1, 1)
-            # input_tensors = torch.zeros(len(sample)+1, 1, K)
-            # input_tensors[0,:,:] = bos_tensor
-
-            # for idx,val in enumerate(sample):
-            #     tensor = torch.zeros(1,1,K)
-            #     tensor[:,:,val["type_event"]]=1
-            #     tensor[:,:,-1] = val["time_since_last_event"]
-            #     input_tensors[idx+1,:,:] = tensor
-            #     true_outputs_events[idx,0] = torch.tensor(val["type_event"], dtype=torch.int64)
-            #     true_outputs_time[idx,0] = val["time_since_last_event"]
-
-            # true_outputs_events[:,-1] = eos_index        
-            # no_of_timesteps = input_tensors.size()[0]
-            # total_loss = 0
-
-            # for idx in range(no_of_timesteps):     
-            #     input_tensor = torch.unsqueeze(input_tensors[idx,:,:], 0)                
-            #     out = lstm(input_tensor)
-
-            #     categorical_loss = criterion_1(torch.squeeze(out[:,:,:-1], dim=0), true_outputs_events[idx,:])
-            #     mse_loss = torch.sqrt(criterion_2(out[:,:,-1], true_outputs_time[idx,:]))
-                
-            #     loss = categorical_loss+mse_loss
-            #     total_loss += loss
-
             
         epoch_loss /= n_samples
         if epoch % epochs_per_save == epochs_per_save-1:
