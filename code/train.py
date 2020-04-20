@@ -19,37 +19,50 @@ def get_filename(args, time: int, util_name=""):
         filename = util_name+"_"+filename
     return filename
 
-def get_batches(samples, batch_size, padding_index, K):
+def get_batches(samples, true_outputs_events, true_outputs_time, batch_size, padding_index, K):
     # TO DO
-    pass
-    samples = sorted(samples, key=len)
+    pass    
     batches = []
     count = 0
     batch = []    
-    padding_event = {
-        'time_since_last_event':0,
-        'time_since_last_same_event':0,
-        'type_event':padding_index,                    
-    }    
+    batch_true_outputs_events = []
+    batch_true_outputs_time = []
+    padding_tensor = torch.zeros(1, 1, K)
     for idx, s in enumerate(samples):               
         batch.append(s)
+        batch_true_outputs_events.append(true_outputs_events[idx])
+        batch_true_outputs_time.append(true_outputs_time[idx])
         if (idx+1)%batch_size==0:
-            max_len = max([len(val) for val in batch])
+            max_len = max([val.size()[0] for val in batch])
             batch_new = []
-            for val in batch:
-                if len(val) < batch_size:                    
-                    val = val+[padding_event]*(max_len-len(val))
-                batch_new.append(val)
-            batches.append(batch_new)
-            temp = torch.tensor(batch_new)
+            batch_true_outputs_events_new = []
+            batch_true_outputs_time_new = []
+            for val1,val2,val3 in zip(batch, batch_true_outputs_events, batch_true_outputs_time):
+                if val1.size()[0] < max_len:                    
+                    curr_len = val1.size()[0]
+                    val1 = torch.cat((val1, padding_tensor.repeat(max_len-curr_len,1,1)), dim=0)
+                    val2 = torch.cat((val2, torch.ones(1,1,dtype=torch.long).repeat(max_len-curr_len,1)), dim=0)
+                    val3 = torch.cat((val3, torch.ones(1,1).repeat(max_len-curr_len,1)), dim=0)
+                batch_new.append(val1)
+                batch_true_outputs_events_new.append(val2)
+                batch_true_outputs_time_new.append(val3)
+
+            batches.append({
+                "inputs": batch_new,
+                "true_outputs_event": batch_true_outputs_events_new,
+                "true_outputs_time": batch_true_outputs_time_new
+            })       
+                 
             batch = []
+            batch_true_outputs_events = []
+            batch_true_outputs_time = []
     return batches
 
 def get_tensors(samples, K, bos_index, eos_index):
     samples_tensor_list = []
-    # true_outputs_tensor_list = []
     true_outputs_events = []
     true_outputs_time = []
+    
     for s in samples:
         bos_tensor = torch.zeros(1,1,K)
         bos_tensor[:,:,bos_index]=1
@@ -79,14 +92,17 @@ if __name__ == "__main__":
     learning_rate = 0.0001
     train_pickle_path = "data_hawkes/train.pkl"
     dev_pickle_path = "data_hawkes/dev.pkl"
-    K=5+3+1
+    
+    # 5 for event types, 3 for BOS, EOS and PADDING, 1 for regression value (delta t)
+    K=5+3+1 
+
     epochs_per_save = 5
-    batch_size = 100
+    batch_size = 8
     bos_index = 5
     eos_index = 6
     padding_index = 7
     time = datetime.now().timestamp()
-    n_samples = 10
+    n_samples = 100
     seed_val = 23
 
     random.seed(seed_val)
@@ -107,19 +123,20 @@ if __name__ == "__main__":
     train_size = len(train_samples)
     train_samples = sorted(train_samples, key=len)
     train_inputs, train_true_outputs_events, train_true_outputs_time = get_tensors(train_samples, K, bos_index, eos_index)
-    # train_batches = get_batches(train_samples, batch_size, padding_index, K)
-    # dev_batches = get_batches(dev_samples, batch_size, padding_index, K)
+    train_batches = get_batches(train_inputs, train_true_outputs_events, train_true_outputs_time, batch_size, padding_index, K)
 
-    criterion_1 = nn.CrossEntropyLoss(reduction='mean')
+    criterion_1 = nn.CrossEntropyLoss(reduction='mean', ignore_index=padding_index)
     criterion_2 = nn.MSELoss(reduction='mean')    
 
 
-    # random.shuffle(train_samples)
     optim = torch.optim.AdamW(lstm.parameters(), lr=learning_rate)
     print(f"No of samples: {n_samples}\nNo of epochs: {max_epochs}\nLearning rate: {learning_rate}")
     for epoch in range(max_epochs):
         epoch_loss = 0
-        for train_sample, true_events, true_delta_t in zip(train_inputs, train_true_outputs_events, train_true_outputs_time):
+        for batch in train_batches:
+            train_sample = torch.cat(batch["inputs"], dim=1)
+            true_events = torch.cat(batch["true_outputs_event"], dim=1)
+            true_delta_t = torch.cat(batch["true_outputs_time"], dim=1)
             no_of_timesteps = train_sample.size()[0]
             total_loss = 0
             for t in range(no_of_timesteps):
