@@ -56,6 +56,27 @@ def get_batches(samples, true_outputs_events, true_outputs_time, batch_size, pad
             batch = []
             batch_true_outputs_events = []
             batch_true_outputs_time = []
+
+    if len(batch) > 0:
+        max_len = max([val.size()[0] for val in batch])
+        batch_new = []
+        batch_true_outputs_events_new = []
+        batch_true_outputs_time_new = []
+        for val1,val2,val3 in zip(batch, batch_true_outputs_events, batch_true_outputs_time):
+            if val1.size()[0] < max_len:                    
+                curr_len = val1.size()[0]
+                val1 = torch.cat((val1, padding_tensor.repeat(max_len-curr_len,1,1)), dim=0)
+                val2 = torch.cat((val2, torch.ones(1,1,dtype=torch.long).repeat(max_len-curr_len,1)), dim=0)
+                val3 = torch.cat((val3, torch.ones(1,1).repeat(max_len-curr_len,1)), dim=0)
+            batch_new.append(val1)
+            batch_true_outputs_events_new.append(val2)
+            batch_true_outputs_time_new.append(val3)
+
+        batches.append({
+            "inputs": batch_new,
+            "true_outputs_event": batch_true_outputs_events_new,
+            "true_outputs_time": batch_true_outputs_time_new
+        })                   
     return batches
 
 def get_tensors(samples, K, bos_index, eos_index):
