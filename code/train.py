@@ -79,7 +79,7 @@ def get_batches(samples, true_outputs_events, true_outputs_time, batch_size, pad
             if val1.size()[0] < max_len:                    
                 curr_len = val1.size()[0]
                 val1 = torch.cat((val1, padding_tensor.repeat(max_len-curr_len,1,1)), dim=0)
-                val2 = torch.cat((val2, torch.ones(1,1,dtype=torch.long).repeat(max_len-curr_len,1)), dim=0)
+                val2 = torch.cat((val2, torch.ones(1,1).repeat(max_len-curr_len,1)), dim=0)
                 val3 = torch.cat((val3, torch.ones(1,1).repeat(max_len-curr_len,1)), dim=0)
             batch_new.append(val1)
             batch_true_outputs_events_new.append(val2)
@@ -133,13 +133,13 @@ def train_model(train_samples, dev_samples, learning_rate, max_epochs, batch_siz
     Path(saves_path).mkdir(parents=True, exist_ok=True)
     
     mlstm = lstm.LSTMTagger(K, hidden_size, K)
-    mlstm.cuda(device=device)
+    if torch.cuda.is_available():
+        mlstm.cuda(device=device)
 
     criterion_1 = nn.CrossEntropyLoss(reduction='mean', ignore_index=padding_index)
     criterion_2 = nn.MSELoss(reduction='mean') 
 
     optim = torch.optim.Adam(mlstm.parameters(), lr=learning_rate)
-
 
     n_samples = len(train_samples)
     train_samples = [train_samples[idx] for idx in np.random.choice(np.arange(len(train_samples)), size=n_samples)]
@@ -218,26 +218,34 @@ def train_model(train_samples, dev_samples, learning_rate, max_epochs, batch_siz
 
 
 if __name__ == "__main__":
-    dir_name = "data_retweet"
+    dir_name = "data_hawkes"
     train_pickle_path = dir_name + "/train.pkl"
     dev_pickle_path = dir_name + "/dev.pkl"
 
     device = get_device(0)
 
     max_epochs = 20
-    learning_rates = [0.001, 0.0001]
+    learning_rates = [
+        # 0.001, 
+        0.0001
+    ]
     epochs_per_save = 5
     batch_size = 32
-    hidden_sizes = [32, 128, 512]
+    hidden_sizes = [
+        32, 
+        # 128, 
+        # 512
+    ]
     
     seed_val = 23
     random.seed(seed_val)
     np.random.seed(seed_val)
     torch.manual_seed(seed_val)
-    torch.cuda.manual_seed_all(seed_val)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed_val)
 
-    train_samples = pickle.load(open(train_pickle_path, "rb"), encoding="latin1")['train']
-    dev_samples = pickle.load(open(dev_pickle_path, "rb"), encoding="latin1")['dev']
+    train_samples = pickle.load(open(train_pickle_path, "rb"), encoding="latin1")["train"]
+    dev_samples = pickle.load(open(dev_pickle_path, "rb"), encoding="latin1")["dev"]
 
     # 5 for event types, 3 for BOS, EOS and PADDING, 1 for regression value (delta t)
     if dir_name == "data_hawkes":
