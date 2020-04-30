@@ -79,8 +79,8 @@ def get_batches(samples, true_outputs_events, true_outputs_time, batch_size, pad
             if val1.size()[0] < max_len:                    
                 curr_len = val1.size()[0]
                 val1 = torch.cat((val1, padding_tensor.repeat(max_len-curr_len,1,1)), dim=0)
-                val2 = torch.cat((val2, torch.ones(1,1).repeat(max_len-curr_len,1)), dim=0)
-                val3 = torch.cat((val3, torch.ones(1,1).repeat(max_len-curr_len,1)), dim=0)
+                val2 = torch.cat((val2, torch.zeros(1,1).repeat(max_len-curr_len,1)), dim=0)
+                val3 = torch.cat((val3, torch.zeros(1,1).repeat(max_len-curr_len,1)), dim=0)
             batch_new.append(val1)
             batch_true_outputs_events_new.append(val2)
             batch_true_outputs_time_new.append(val3)
@@ -114,6 +114,7 @@ def get_tensors(samples, K, bos_index, eos_index):
             true_outputs_t[idx,0] = torch.tensor(val["time_since_last_event"], dtype=torch.float64)
 
         true_outputs_e[-1,:] = eos_index 
+        true_outputs_t[-1,:] = 0
         samples_tensor_list.append(input_tensors)
         true_outputs_events.append(true_outputs_e)
         true_outputs_time.append(true_outputs_t)
@@ -122,12 +123,11 @@ def get_tensors(samples, K, bos_index, eos_index):
 
 
 
-def train_model(train_samples, dev_samples, learning_rate, max_epochs, batch_size, K, hidden_size, bos_index, eos_index, device):
+def train_model(train_samples, dev_samples, learning_rate, max_epochs, batch_size, K, hidden_size, bos_index, eos_index, padding_index, device, dir_name):
     epochs_per_save = 5
-    padding_index = 5
 
     time = datetime.now().timestamp()
-    saves_path = os.path.join("./saves/", 
+    saves_path = os.path.join("./saves/" + dir_name + "/", 
         get_filename({"learning_rate": learning_rate, "max_epochs": max_epochs}, time)
     )
     Path(saves_path).mkdir(parents=True, exist_ok=True)
@@ -170,11 +170,14 @@ def train_model(train_samples, dev_samples, learning_rate, max_epochs, batch_siz
                 out = mlstm(torch.unsqueeze(train_sample[t,:,:], dim=0))
                 temp=out[:,:,:-1]
                 temp2 = true_events[t,:]
+                temp3 = true_delta_t[t,:]
                 categorical_loss = criterion_1(torch.squeeze(temp, dim=0), torch.squeeze(temp2, dim=0))
-                mse_loss = torch.sqrt(criterion_2(out[:,:,-1], true_delta_t[t,:]))
+                mse_loss = torch.sqrt(criterion_2(out[:,:,-1], torch.unsqueeze(true_delta_t[t,:], dim=0)))
+                
                 
                 loss = categorical_loss+mse_loss
                 total_loss += loss
+            total_loss = total_loss/no_of_timesteps
             epoch_loss += total_loss     
             total_loss.backward()
             optim.step()
@@ -196,11 +199,11 @@ def train_model(train_samples, dev_samples, learning_rate, max_epochs, batch_siz
                 temp = out[:,:,:-1]
                 temp2 = dev_true_events[t,:]
                 categorical_loss = criterion_1(torch.squeeze(temp, dim=0), torch.squeeze(temp2, dim=0))
-                mse_loss = torch.sqrt(criterion_2(out[:,:,-1], dev_true_delta_t[t,:]))
+                mse_loss = torch.sqrt(criterion_2(out[:,:,-1], torch.unsqueeze(dev_true_delta_t[t,:], dim=0)))
                 
                 loss = categorical_loss+mse_loss
                 total_loss += loss
-
+            total_loss = total_loss/no_of_timesteps
             dev_loss += total_loss     
         dev_loss /= dev_size
 
@@ -218,10 +221,11 @@ def train_model(train_samples, dev_samples, learning_rate, max_epochs, batch_siz
 
 
 if __name__ == "__main__":
-    dir_name = "data_hawkes"
+    dir_name = "data_retweet"
     train_pickle_path = dir_name + "/train.pkl"
     dev_pickle_path = dir_name + "/dev.pkl"
 
+    print("Training Data Directory: ", dir_name)
     device = get_device(0)
 
     max_epochs = 20
@@ -230,7 +234,7 @@ if __name__ == "__main__":
         0.0001
     ]
     epochs_per_save = 5
-    batch_size = 32
+    batch_size = 256
     hidden_sizes = [
         32, 
         # 128, 
@@ -252,14 +256,16 @@ if __name__ == "__main__":
         K=5+3+1 
         bos_index = 5
         eos_index = 6
+        padding_index = 7
 
        
     if dir_name == "data_retweet":
         K=3+3+1
         bos_index = 3
         eos_index = 4
+        padding_index = 5
     
     for learning_rate in learning_rates:
         for hidden_size in hidden_sizes:
-            train_model(train_samples, dev_samples, learning_rate, max_epochs, batch_size, K, hidden_size, bos_index, eos_index, device)
+            train_model(train_samples, dev_samples, learning_rate, max_epochs, batch_size, K, hidden_size, bos_index, eos_index, padding_index, device, dir_name)
     
