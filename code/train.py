@@ -123,7 +123,8 @@ def get_tensors(samples, K, bos_index, eos_index):
 
 
 
-def train_model(train_samples, dev_samples, learning_rate, max_epochs, batch_size, K, hidden_size, bos_index, eos_index, padding_index, device, dir_name):
+def train_model(train_samples, dev_samples, learning_rate, max_epochs, batch_size, 
+K, hidden_size, bos_index, eos_index, padding_index, device, gradient_update, dir_name):
     epochs_per_save = 5
 
     time = datetime.now().timestamp()
@@ -178,11 +179,16 @@ def train_model(train_samples, dev_samples, learning_rate, max_epochs, batch_siz
                 loss = categorical_loss+mse_loss
                 total_loss += loss
             total_loss = total_loss/no_of_timesteps
-            epoch_loss += total_loss     
-            total_loss.backward()
+            epoch_loss += total_loss 
+            if gradient_update == "minibatch":    
+                total_loss.backward()
+                optim.step()
+
+        epoch_loss /= n_samples
+        if gradient_update == "batch":
+            epoch_loss.backward()
             optim.step()
         
-        epoch_loss /= n_samples
 
         dev_loss = 0
         for batch in dev_batches:
@@ -221,7 +227,7 @@ def train_model(train_samples, dev_samples, learning_rate, max_epochs, batch_siz
 
 
 if __name__ == "__main__":
-    dir_name = "data_retweet"
+    dir_name = "data/data_hawkes"
     train_pickle_path = dir_name + "/train.pkl"
     dev_pickle_path = dir_name + "/dev.pkl"
 
@@ -252,20 +258,24 @@ if __name__ == "__main__":
     dev_samples = pickle.load(open(dev_pickle_path, "rb"), encoding="latin1")["dev"]
 
     # 5 for event types, 3 for BOS, EOS and PADDING, 1 for regression value (delta t)
-    if dir_name == "data_hawkes":
+    if dir_name == "data/data_hawkes":
         K=5+3+1 
         bos_index = 5
         eos_index = 6
         padding_index = 7
 
        
-    if dir_name == "data_retweet":
+    if dir_name == "data/data_retweet":
         K=3+3+1
         bos_index = 3
         eos_index = 4
         padding_index = 5
     
+    gradient_updates = ["batch"]
     for learning_rate in learning_rates:
         for hidden_size in hidden_sizes:
-            train_model(train_samples, dev_samples, learning_rate, max_epochs, batch_size, K, hidden_size, bos_index, eos_index, padding_index, device, dir_name)
+            for update in gradient_updates:
+                train_model(train_samples, dev_samples, learning_rate, 
+                max_epochs, batch_size, K, hidden_size, bos_index, 
+                eos_index, padding_index, device, update, dir_name)
     
