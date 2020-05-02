@@ -10,22 +10,24 @@ from datetime import datetime
 from pathlib import Path
 import random
 import pickle
+import logging
 
 
-def get_device(device_no: int):
+
+
+def get_device(device_no: int, logger):
     if torch.cuda.is_available():    
         # Tell PyTorch to use the GPU.    
         device = torch.device("cuda:"+str(device_no))
-        print('There are %d GPU(s) available.' % torch.cuda.device_count())
-        print('We will use the GPU:', torch.cuda.get_device_name(0))
+        logger.info('There are %d GPU(s) available.' + str(torch.cuda.device_count()))
+        logger.info('We will use the GPU:'+ str(torch.cuda.get_device_name(0)))
     # If not...
     else:
-        print('No GPU available, using the CPU instead.')
+        logger.info('No GPU available, using the CPU instead.')
         device = torch.device("cpu")
     return device
 
-def get_filename(args, time: int, util_name=""):   
-    print(args)
+def get_filename(args: dict, time: int, util_name=""):   
     time = datetime.fromtimestamp(int(time))
     filename = str(time.strftime(str(args["learning_rate"])+"lr_"+str(args["max_epochs"])+'epochs_%b-%d-%Y_%H-%M-%S'))
     if util_name != "":
@@ -123,16 +125,27 @@ def get_tensors(samples, K, bos_index, eos_index):
 
 
 
-def train_model(train_samples, dev_samples, learning_rate, max_epochs, batch_size, 
-K, hidden_size, bos_index, eos_index, padding_index, device, gradient_update, dir_name):
+def train_model(train_samples, dev_samples, learning_rate, 
+    max_epochs, batch_size, K, hidden_size, bos_index, 
+    eos_index, padding_index, gradient_update, dir_name):
+    
     epochs_per_save = 5
+    
 
     time = datetime.now().timestamp()
-    saves_path = os.path.join("./saves/" + dir_name + "/", 
-        get_filename({"learning_rate": learning_rate, "max_epochs": max_epochs}, time)
-    )
+    #saves_path = os.path.join("./saves/" + str(datetime.fromtimestamp(int(time)).strftime(dir_name + '_%b-%d-%Y_%H-%M-%S')) + "/", 
+    #    get_filename({"learning_rate": learning_rate, "max_epochs": max_epochs}, time)
+    #)
+    saves_path = "./saves/" + str(datetime.fromtimestamp(int(time)).strftime(dir_name + '_%b-%d-%Y_%H-%M-%S')) + "/"
     Path(saves_path).mkdir(parents=True, exist_ok=True)
-    
+    logging.basicConfig(filename=os.path.join(saves_path,'run.log'), filemode='w', format='%(asctime)s - %(message)s')
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG)
+
+    logger.info("Training Data Directory: %s", dir_name)
+    logger.info("Learning rate: " + str(learning_rate) + " Hidden size: " + str(hidden_size)+ " Batch size:" + str(batch_size))
+    device = get_device(0, logger)
+
     mlstm = lstm.LSTMTagger(K, hidden_size, K)
     if torch.cuda.is_available():
         mlstm.cuda(device=device)
@@ -154,10 +167,12 @@ K, hidden_size, bos_index, eos_index, padding_index, device, gradient_update, di
     dev_inputs, dev_true_outputs_events, dev_true_outputs_time = get_tensors(dev_samples, K, bos_index, eos_index)
     dev_batches = get_batches(dev_inputs, dev_true_outputs_events, dev_true_outputs_time, batch_size, padding_index, K)
 
-    print(f"No of samples: {n_samples}\nNo of epochs: {max_epochs}\nLearning rate: {learning_rate}")
+    logger.info(f"No of samples: {n_samples}, No of epochs: {max_epochs}")
     results = []
     for epoch in range(max_epochs):
         epoch_loss = 0
+        event_losses = []
+        time_losses = []
         for batch in train_batches:
             train_sample = torch.cat(batch["inputs"], dim=1).to(device)
             true_events = torch.cat(batch["true_outputs_event"], dim=1).to(device, dtype=torch.long)
@@ -167,6 +182,8 @@ K, hidden_size, bos_index, eos_index, padding_index, device, gradient_update, di
             # true_delta_t = torch.cat(batch["true_outputs_time"], dim=1)
             no_of_timesteps = train_sample.size()[0]
             total_loss = 0
+            avg_time_loss = 0
+            avg_event_loss = 0
             for t in range(no_of_timesteps):
                 out = mlstm(torch.unsqueeze(train_sample[t,:,:], dim=0))
                 temp=out[:,:,:-1]
@@ -174,10 +191,17 @@ K, hidden_size, bos_index, eos_index, padding_index, device, gradient_update, di
                 temp3 = true_delta_t[t,:]
                 categorical_loss = criterion_1(torch.squeeze(temp, dim=0), torch.squeeze(temp2, dim=0))
                 mse_loss = torch.sqrt(criterion_2(out[:,:,-1], torch.unsqueeze(true_delta_t[t,:], dim=0)))
-                
+                avg_event_loss += categorical_loss
+                avg_time_loss += mse_loss
                 
                 loss = categorical_loss+mse_loss
                 total_loss += loss
+            
+            avg_time_loss /= no_of_timesteps
+            avg_event_loss /= no_of_timesteps
+            event_losses.append(avg_event_loss.detach())
+            time_losses.append(avg_time_loss.detach())
+
             total_loss = total_loss/no_of_timesteps
             epoch_loss += total_loss 
             if gradient_update == "minibatch":    
@@ -191,6 +215,8 @@ K, hidden_size, bos_index, eos_index, padding_index, device, gradient_update, di
         
 
         dev_loss = 0
+        event_losses_dev = []
+        time_losess_dev = []
         for batch in dev_batches:
             dev_sample = torch.cat(batch["inputs"], dim=1).to(device)
             dev_true_events = torch.cat(batch["true_outputs_event"], dim=1).to(device, dtype=torch.long)
@@ -200,53 +226,84 @@ K, hidden_size, bos_index, eos_index, padding_index, device, gradient_update, di
             # true_delta_t = torch.cat(batch["true_outputs_time"], dim=1)
             no_of_timesteps =dev_sample.size()[0]
             total_loss = 0
+            avg_event_loss_dev = 0
+            avg_time_loss_dev = 0
             for t in range(no_of_timesteps):
                 out = mlstm(torch.unsqueeze(dev_sample[t,:,:], dim=0))
                 temp = out[:,:,:-1]
                 temp2 = dev_true_events[t,:]
                 categorical_loss = criterion_1(torch.squeeze(temp, dim=0), torch.squeeze(temp2, dim=0))
+                avg_event_loss_dev += categorical_loss
+
                 mse_loss = torch.sqrt(criterion_2(out[:,:,-1], torch.unsqueeze(dev_true_delta_t[t,:], dim=0)))
-                
+                avg_time_loss_dev += mse_loss
+
                 loss = categorical_loss+mse_loss
                 total_loss += loss
+            avg_event_loss_dev /= no_of_timesteps
+            avg_time_loss_dev /= no_of_timesteps
             total_loss = total_loss/no_of_timesteps
-            dev_loss += total_loss     
+            dev_loss += total_loss 
+            
+            event_losses_dev.append(avg_event_loss_dev.detach())
+            time_losess_dev.append(avg_time_loss_dev.detach())
+
         dev_loss /= dev_size
 
 
-        results.append({'epoch': epoch, 'train_loss': epoch_loss.item(), 'dev_loss': dev_loss.item()})
+        avg_event_loss_val = np.mean(avg_event_loss.detach().cpu().numpy())
+        avg_time_loss_val = np.mean(avg_time_loss.detach().cpu().numpy())
+        avg_event_loss_dev_val = np.mean(avg_event_loss_dev.detach().cpu().numpy())
+        avg_time_loss_dev_val = np.mean(avg_time_loss_dev.detach().cpu().numpy())
+
+        results.append({'epoch': epoch, 'train_loss': epoch_loss.item(), 'dev_loss': dev_loss.item(), 
+                        'event_loss': avg_event_loss_val, 'time_loss': avg_time_loss_val,
+                        'dev_event_loss':  avg_event_loss_dev_val, 'dev_time_loss':  avg_time_loss_dev_val})
         if epoch % epochs_per_save == epochs_per_save-1:
             filename = os.path.join(saves_path, "model_"+str(epoch+1)+"_epochs")
             torch.save(mlstm, filename)
-            pickle.dump({'results': results, 'args': {'learning_rate': learning_rate, 'max_epochs': max_epochs, 'batch_size': batch_size, 'K': K, 'hidden_size': hidden_size }}, open(saves_path+"/losses.pkl", 'wb'))
+            pickle.dump({'results': results, 
+                        'args': {'learning_rate': learning_rate, 'max_epochs': max_epochs, 'batch_size': batch_size, 'K': K, 'hidden_size': hidden_size }}, 
+                        open(saves_path+"/losses.pkl", 'wb'))
 
         
-        print(f"Epoch: {epoch+1}, Train Loss: {epoch_loss}, Dev Loss: {dev_loss}")
-
-    pickle.dump({'results': results, 'args': {'learning_rate': learning_rate, 'max_epochs': max_epochs, 'batch_size': batch_size, 'K': K, 'hidden_size': hidden_size }}, open(saves_path+"/losses.pkl", 'wb'))
+        logger.info("Epoch: " + str(epoch+1) + ", Train Loss: " + str(epoch_loss.item()) + ", Dev Loss: " + str(dev_loss.item()) +", Train Event loss: " + str(avg_event_loss_val) + 
+                   ", Train Time loss " + str(avg_time_loss_val) + ", Dev Event loss " + str(avg_event_loss_dev_val) + ", Dev Time loss " + str(avg_time_loss_dev_val))
+                        
+    pickle.dump({'results': results, 
+                 'args': {'learning_rate': learning_rate, 'max_epochs': max_epochs, 'batch_size': batch_size, 'K': K, 'hidden_size': hidden_size }}, 
+                  open(saves_path+"/losses.pkl", 'wb'))
+    handlers = logger.handlers[:]
+    for handler in handlers:
+        handler.close()
+        logger.removeHandler(handler)
 
 
 if __name__ == "__main__":
     dir_name = "data/data_hawkes"
     train_pickle_path = dir_name + "/train.pkl"
     dev_pickle_path = dir_name + "/dev.pkl"
+    
 
-    print("Training Data Directory: ", dir_name)
-    device = get_device(0)
+    # logger.info("Training Data Directory: %s", dir_name)
 
     max_epochs = 20
     learning_rates = [
-        # 0.001, 
-        0.0001
+        0.001, 
+        0.0001,
+        0.00001
     ]
     epochs_per_save = 5
-    batch_size = 256
+    batch_sizes = [
+        128,
+        256,
+        512
+        ]
     hidden_sizes = [
         32, 
-        # 128, 
-        # 512
+        128, 
+        512
     ]
-    
     seed_val = 23
     random.seed(seed_val)
     np.random.seed(seed_val)
@@ -257,25 +314,35 @@ if __name__ == "__main__":
     train_samples = pickle.load(open(train_pickle_path, "rb"), encoding="latin1")["train"]
     dev_samples = pickle.load(open(dev_pickle_path, "rb"), encoding="latin1")["dev"]
 
+    #batch_sizes.append(len(train_samples))
+
     # 5 for event types, 3 for BOS, EOS and PADDING, 1 for regression value (delta t)
-    if dir_name == "data/data_hawkes":
+    if "data_hawkes" in dir_name:
         K=5+3+1 
         bos_index = 5
         eos_index = 6
         padding_index = 7
 
        
-    if dir_name == "data/data_retweet":
+    if "data_retweet" in dir_name:
         K=3+3+1
         bos_index = 3
         eos_index = 4
         padding_index = 5
     
     gradient_updates = ["batch"]
+
     for learning_rate in learning_rates:
         for hidden_size in hidden_sizes:
-            for update in gradient_updates:
-                train_model(train_samples, dev_samples, learning_rate, 
-                max_epochs, batch_size, K, hidden_size, bos_index, 
-                eos_index, padding_index, device, update, dir_name)
+            for g_update in gradient_updates:
+                if g_update != "batch":
+                    for batch_size in batch_sizes:
+                        train_model(train_samples, dev_samples, learning_rate, 
+                        max_epochs, batch_size, K, hidden_size, bos_index, eos_index, 
+                        padding_index, g_update, dir_name)
+                else:
+                    batch_size = 64
+                    train_model(train_samples, dev_samples, learning_rate, max_epochs, 
+                    batch_size, K, hidden_size, bos_index, eos_index, 
+                    padding_index, g_update, dir_name)
     
