@@ -169,6 +169,7 @@ def train_model(train_samples, dev_samples, learning_rate,
 
     logger.info(f"No of samples: {n_samples}, No of epochs: {max_epochs}")
     results = []
+    optim.zero_grad()
     for epoch in range(max_epochs):
         epoch_loss = 0
         event_losses = []
@@ -207,11 +208,13 @@ def train_model(train_samples, dev_samples, learning_rate,
             if gradient_update == "minibatch":    
                 total_loss.backward()
                 optim.step()
+                optim.zero_grad()
 
         epoch_loss /= n_samples
         if gradient_update == "batch":
             epoch_loss.backward()
             optim.step()
+            optim.zero_grad()
         
 
         dev_loss = 0
