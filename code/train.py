@@ -187,10 +187,7 @@ def train_model(train_samples, dev_samples, learning_rate,
             avg_event_loss = 0
             for t in range(no_of_timesteps):
                 out = mlstm(torch.unsqueeze(train_sample[t,:,:], dim=0))
-                temp=out[:,:,:-1]
-                temp2 = true_events[t,:]
-                temp3 = true_delta_t[t,:]
-                categorical_loss = criterion_1(torch.squeeze(temp, dim=0), torch.squeeze(temp2, dim=0))
+                categorical_loss = criterion_1(torch.squeeze(out[:,:,:-1], dim=0), torch.squeeze(true_events[t,:], dim=0))
                 mse_loss = torch.sqrt(criterion_2(out[:,:,-1], torch.unsqueeze(true_delta_t[t,:], dim=0)))
                 avg_event_loss += categorical_loss
                 avg_time_loss += mse_loss
@@ -209,7 +206,7 @@ def train_model(train_samples, dev_samples, learning_rate,
                 total_loss.backward()
                 optim.step()
                 optim.zero_grad()
-
+        # print(torch.cuda.memory_allocated(device=device))
         epoch_loss /= n_samples
         if gradient_update == "batch":
             epoch_loss.backward()
@@ -231,18 +228,18 @@ def train_model(train_samples, dev_samples, learning_rate,
             total_loss = 0
             avg_event_loss_dev = 0
             avg_time_loss_dev = 0
-            for t in range(no_of_timesteps):
-                out = mlstm(torch.unsqueeze(dev_sample[t,:,:], dim=0))
-                temp = out[:,:,:-1]
-                temp2 = dev_true_events[t,:]
-                categorical_loss = criterion_1(torch.squeeze(temp, dim=0), torch.squeeze(temp2, dim=0))
-                avg_event_loss_dev += categorical_loss
+            with torch.no_grad():
+                for t in range(no_of_timesteps):
+                    out = mlstm(torch.unsqueeze(dev_sample[t,:,:], dim=0))
+                    categorical_loss = criterion_1(torch.squeeze(out[:,:,:-1], dim=0), torch.squeeze(dev_true_events[t,:], dim=0))
+                    avg_event_loss_dev += categorical_loss
 
-                mse_loss = torch.sqrt(criterion_2(out[:,:,-1], torch.unsqueeze(dev_true_delta_t[t,:], dim=0)))
-                avg_time_loss_dev += mse_loss
+                    mse_loss = torch.sqrt(criterion_2(out[:,:,-1], torch.unsqueeze(dev_true_delta_t[t,:], dim=0)))
+                    avg_time_loss_dev += mse_loss
 
-                loss = categorical_loss+mse_loss
-                total_loss += loss
+                    loss = categorical_loss+mse_loss
+                    total_loss += loss
+
             avg_event_loss_dev /= no_of_timesteps
             avg_time_loss_dev /= no_of_timesteps
             total_loss = total_loss/no_of_timesteps
@@ -272,7 +269,9 @@ def train_model(train_samples, dev_samples, learning_rate,
         
         logger.info("Epoch: " + str(epoch+1) + ", Train Loss: " + str(epoch_loss.item()) + ", Dev Loss: " + str(dev_loss.item()) +", Train Event loss: " + str(avg_event_loss_val) + 
                    ", Train Time loss " + str(avg_time_loss_val) + ", Dev Event loss " + str(avg_event_loss_dev_val) + ", Dev Time loss " + str(avg_time_loss_dev_val))
-                        
+        
+
+
     pickle.dump({'results': results, 
                  'args': {'learning_rate': learning_rate, 'max_epochs': max_epochs, 'batch_size': batch_size, 'K': K, 'hidden_size': hidden_size }}, 
                   open(saves_path+"/losses.pkl", 'wb'))
@@ -283,7 +282,7 @@ def train_model(train_samples, dev_samples, learning_rate,
 
 
 if __name__ == "__main__":
-    dir_name = "data/data_hawkes"
+    dir_name = "data_retweet"
     train_pickle_path = dir_name + "/train.pkl"
     dev_pickle_path = dir_name + "/dev.pkl"
     
@@ -292,20 +291,21 @@ if __name__ == "__main__":
 
     max_epochs = 20
     learning_rates = [
-        0.001, 
-        0.0001,
-        0.00001
+       0.001, 
+       0.0001,
+       0.00001,
     ]
     epochs_per_save = 5
     batch_sizes = [
         128,
         256,
-        512
+        512,
         ]
     hidden_sizes = [
         32, 
-        128, 
-        512
+       128, 
+       256,
+       512
     ]
     seed_val = 23
     random.seed(seed_val)
@@ -314,8 +314,8 @@ if __name__ == "__main__":
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed_val)
 
-    train_samples = pickle.load(open(train_pickle_path, "rb"), encoding="latin1")["train"]
-    dev_samples = pickle.load(open(dev_pickle_path, "rb"), encoding="latin1")["dev"]
+    train_samples = pickle.load(open(train_pickle_path, "rb"), encoding="latin1")['train']
+    dev_samples = pickle.load(open(dev_pickle_path, "rb"), encoding="latin1")['dev']
 
     #batch_sizes.append(len(train_samples))
 
@@ -344,7 +344,7 @@ if __name__ == "__main__":
                         max_epochs, batch_size, K, hidden_size, bos_index, eos_index, 
                         padding_index, g_update, dir_name)
                 else:
-                    batch_size = 64
+                    batch_size = 16
                     train_model(train_samples, dev_samples, learning_rate, max_epochs, 
                     batch_size, K, hidden_size, bos_index, eos_index, 
                     padding_index, g_update, dir_name)
