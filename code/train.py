@@ -11,6 +11,7 @@ from pathlib import Path
 import random
 import pickle
 import logging
+import gc
 
 
 
@@ -156,6 +157,7 @@ def train_model(train_samples, dev_samples, learning_rate,
     optim = torch.optim.Adam(mlstm.parameters(), lr=learning_rate)
 
     n_samples = len(train_samples)
+    # n_samples = 500
     train_samples = [train_samples[idx] for idx in np.random.choice(np.arange(len(train_samples)), size=n_samples)]
 
     train_samples = sorted(train_samples, key=len)
@@ -174,7 +176,10 @@ def train_model(train_samples, dev_samples, learning_rate,
         epoch_loss = 0
         event_losses = []
         time_losses = []
+        count = 0
         for batch in train_batches:
+            print(count)
+            count += 1
             train_sample = torch.cat(batch["inputs"], dim=1).to(device)
             true_events = torch.cat(batch["true_outputs_event"], dim=1).to(device, dtype=torch.long)
             true_delta_t = torch.cat(batch["true_outputs_time"], dim=1).to(device)
@@ -189,16 +194,19 @@ def train_model(train_samples, dev_samples, learning_rate,
                 out = mlstm(torch.unsqueeze(train_sample[t,:,:], dim=0))
                 categorical_loss = criterion_1(torch.squeeze(out[:,:,:-1], dim=0), torch.squeeze(true_events[t,:], dim=0))
                 mse_loss = torch.sqrt(criterion_2(out[:,:,-1], torch.unsqueeze(true_delta_t[t,:], dim=0)))
-                avg_event_loss += categorical_loss
-                avg_time_loss += mse_loss
                 
-                loss = categorical_loss+mse_loss
-                total_loss += loss
+                categorical_loss = torch.tensor(categorical_loss, requires_grad=False)
+                mse_loss = torch.tensor(mse_loss, requires_grad=False)
+                avg_event_loss += categorical_loss.data
+                avg_time_loss += mse_loss.data
+                
+                total_loss += criterion_1(torch.squeeze(out[:,:,:-1], dim=0), torch.squeeze(true_events[t,:], dim=0))+ \
+                            torch.sqrt(criterion_2(out[:,:,-1], torch.unsqueeze(true_delta_t[t,:], dim=0)))
             
             avg_time_loss /= no_of_timesteps
             avg_event_loss /= no_of_timesteps
-            event_losses.append(avg_event_loss.detach())
-            time_losses.append(avg_time_loss.detach())
+            event_losses.append(avg_event_loss.data)
+            time_losses.append(avg_time_loss.data)
 
             total_loss = total_loss/no_of_timesteps
             epoch_loss += total_loss 
@@ -206,29 +214,31 @@ def train_model(train_samples, dev_samples, learning_rate,
                 total_loss.backward()
                 optim.step()
                 optim.zero_grad()
-        # print(torch.cuda.memory_allocated(device=device))
+                gc.collect()
+        print(torch.cuda.memory_allocated(device=device))
         epoch_loss /= n_samples
         if gradient_update == "batch":
             epoch_loss.backward()
             optim.step()
             optim.zero_grad()
-        
+            gc.collect()
+
 
         dev_loss = 0
         event_losses_dev = []
         time_losess_dev = []
-        for batch in dev_batches:
-            dev_sample = torch.cat(batch["inputs"], dim=1).to(device)
-            dev_true_events = torch.cat(batch["true_outputs_event"], dim=1).to(device, dtype=torch.long)
-            dev_true_delta_t = torch.cat(batch["true_outputs_time"], dim=1).to(device)
-            # train_sample = torch.cat(batch["inputs"], dim=1)
-            # true_events = torch.cat(batch["true_outputs_event"], dim=1)
-            # true_delta_t = torch.cat(batch["true_outputs_time"], dim=1)
-            no_of_timesteps =dev_sample.size()[0]
-            total_loss = 0
-            avg_event_loss_dev = 0
-            avg_time_loss_dev = 0
-            with torch.no_grad():
+        with torch.no_grad():
+            for batch in dev_batches:
+                dev_sample = torch.cat(batch["inputs"], dim=1).to(device)
+                dev_true_events = torch.cat(batch["true_outputs_event"], dim=1).to(device, dtype=torch.long)
+                dev_true_delta_t = torch.cat(batch["true_outputs_time"], dim=1).to(device)
+                # train_sample = torch.cat(batch["inputs"], dim=1)
+                # true_events = torch.cat(batch["true_outputs_event"], dim=1)
+                # true_delta_t = torch.cat(batch["true_outputs_time"], dim=1)
+                no_of_timesteps =dev_sample.size()[0]
+                total_loss = 0
+                avg_event_loss_dev = 0
+                avg_time_loss_dev = 0
                 for t in range(no_of_timesteps):
                     out = mlstm(torch.unsqueeze(dev_sample[t,:,:], dim=0))
                     categorical_loss = criterion_1(torch.squeeze(out[:,:,:-1], dim=0), torch.squeeze(dev_true_events[t,:], dim=0))
@@ -237,18 +247,17 @@ def train_model(train_samples, dev_samples, learning_rate,
                     mse_loss = torch.sqrt(criterion_2(out[:,:,-1], torch.unsqueeze(dev_true_delta_t[t,:], dim=0)))
                     avg_time_loss_dev += mse_loss
 
-                    loss = categorical_loss+mse_loss
-                    total_loss += loss
+                    total_loss += categorical_loss+mse_loss
 
-            avg_event_loss_dev /= no_of_timesteps
-            avg_time_loss_dev /= no_of_timesteps
-            total_loss = total_loss/no_of_timesteps
-            dev_loss += total_loss 
-            
-            event_losses_dev.append(avg_event_loss_dev.detach())
-            time_losess_dev.append(avg_time_loss_dev.detach())
+                avg_event_loss_dev /= no_of_timesteps
+                avg_time_loss_dev /= no_of_timesteps
+                total_loss = total_loss/no_of_timesteps
+                dev_loss += total_loss 
+                
+                event_losses_dev.append(avg_event_loss_dev)
+                time_losess_dev.append(avg_time_loss_dev)
 
-        dev_loss /= dev_size
+            dev_loss /= dev_size
 
 
         avg_event_loss_val = np.mean(avg_event_loss.detach().cpu().numpy())
@@ -282,7 +291,7 @@ def train_model(train_samples, dev_samples, learning_rate,
 
 
 if __name__ == "__main__":
-    dir_name = "data_retweet"
+    dir_name = "data/data_retweet"
     train_pickle_path = dir_name + "/train.pkl"
     dev_pickle_path = dir_name + "/dev.pkl"
     
@@ -291,18 +300,18 @@ if __name__ == "__main__":
 
     max_epochs = 20
     learning_rates = [
-       0.001, 
+    #    0.001, 
        0.0001,
-       0.00001,
+    #    0.00001,
     ]
     epochs_per_save = 5
     batch_sizes = [
-        128,
+        # 128,
         256,
         512,
         ]
     hidden_sizes = [
-        32, 
+#        32, 
        128, 
        256,
        512
@@ -333,7 +342,7 @@ if __name__ == "__main__":
         eos_index = 4
         padding_index = 5
     
-    gradient_updates = ["batch"]
+    gradient_updates = ["minibatch"]
 
     for learning_rate in learning_rates:
         for hidden_size in hidden_sizes:
@@ -344,7 +353,7 @@ if __name__ == "__main__":
                         max_epochs, batch_size, K, hidden_size, bos_index, eos_index, 
                         padding_index, g_update, dir_name)
                 else:
-                    batch_size = 16
+                    batch_size = 8
                     train_model(train_samples, dev_samples, learning_rate, max_epochs, 
                     batch_size, K, hidden_size, bos_index, eos_index, 
                     padding_index, g_update, dir_name)
