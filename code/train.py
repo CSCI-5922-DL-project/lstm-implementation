@@ -178,7 +178,7 @@ def train_model(train_samples, dev_samples, learning_rate,
         time_losses = []
         count = 0
         for batch in train_batches:
-            print(count)
+            # print(count)
             count += 1
             train_sample = torch.cat(batch["inputs"], dim=1).to(device)
             true_events = torch.cat(batch["true_outputs_event"], dim=1).to(device, dtype=torch.long)
@@ -205,8 +205,8 @@ def train_model(train_samples, dev_samples, learning_rate,
             
             avg_time_loss /= no_of_timesteps
             avg_event_loss /= no_of_timesteps
-            event_losses.append(avg_event_loss.data)
-            time_losses.append(avg_time_loss.data)
+            event_losses.append(avg_event_loss.item())
+            time_losses.append(avg_time_loss.item())
 
             total_loss = total_loss/no_of_timesteps
             epoch_loss += total_loss 
@@ -215,8 +215,9 @@ def train_model(train_samples, dev_samples, learning_rate,
                 optim.step()
                 optim.zero_grad()
                 gc.collect()
-        print(torch.cuda.memory_allocated(device=device))
-        epoch_loss /= n_samples
+
+        # print(torch.cuda.memory_allocated(device=device))
+        epoch_loss /= len(train_batches)
         if gradient_update == "batch":
             epoch_loss.backward()
             optim.step()
@@ -226,7 +227,7 @@ def train_model(train_samples, dev_samples, learning_rate,
 
         dev_loss = 0
         event_losses_dev = []
-        time_losess_dev = []
+        time_losses_dev = []
         with torch.no_grad():
             for batch in dev_batches:
                 dev_sample = torch.cat(batch["inputs"], dim=1).to(device)
@@ -254,16 +255,16 @@ def train_model(train_samples, dev_samples, learning_rate,
                 total_loss = total_loss/no_of_timesteps
                 dev_loss += total_loss 
                 
-                event_losses_dev.append(avg_event_loss_dev)
-                time_losess_dev.append(avg_time_loss_dev)
+                event_losses_dev.append(avg_event_loss_dev.item())
+                time_losses_dev.append(avg_time_loss_dev.item())
 
-            dev_loss /= dev_size
+            dev_loss /= len(dev_batches)
 
 
-        avg_event_loss_val = np.mean(avg_event_loss.detach().cpu().numpy())
-        avg_time_loss_val = np.mean(avg_time_loss.detach().cpu().numpy())
-        avg_event_loss_dev_val = np.mean(avg_event_loss_dev.detach().cpu().numpy())
-        avg_time_loss_dev_val = np.mean(avg_time_loss_dev.detach().cpu().numpy())
+        avg_event_loss_val = np.mean(event_losses)
+        avg_time_loss_val = np.mean(time_losses)
+        avg_event_loss_dev_val = np.mean(event_losses_dev)
+        avg_time_loss_dev_val = np.mean(time_losses_dev)
 
         results.append({'epoch': epoch, 'train_loss': epoch_loss.item(), 'dev_loss': dev_loss.item(), 
                         'event_loss': avg_event_loss_val, 'time_loss': avg_time_loss_val,
@@ -272,18 +273,33 @@ def train_model(train_samples, dev_samples, learning_rate,
             filename = os.path.join(saves_path, "model_"+str(epoch+1)+"_epochs")
             torch.save(mlstm, filename)
             pickle.dump({'results': results, 
-                        'args': {'learning_rate': learning_rate, 'max_epochs': max_epochs, 'batch_size': batch_size, 'K': K, 'hidden_size': hidden_size }}, 
+                        'args': {
+                            'learning_rate': learning_rate, 
+                            'max_epochs': max_epochs, 
+                            'batch_size': batch_size, 
+                            'K': K, 
+                            'hidden_size': hidden_size 
+                        }}, 
                         open(saves_path+"/losses.pkl", 'wb'))
 
         
-        logger.info("Epoch: " + str(epoch+1) + ", Train Loss: " + str(epoch_loss.item()) + ", Dev Loss: " + str(dev_loss.item()) +", Train Event loss: " + str(avg_event_loss_val) + 
-                   ", Train Time loss " + str(avg_time_loss_val) + ", Dev Event loss " + str(avg_event_loss_dev_val) + ", Dev Time loss " + str(avg_time_loss_dev_val))
+        logger.info("Epoch: " + str(epoch+1) + ", Train Loss: " + str(epoch_loss.item()) + 
+        ", Dev Loss: " + str(dev_loss.item()) +", Train Event loss: " + str(avg_event_loss_val) + 
+        ", Train Time loss " + str(avg_time_loss_val) + ", Dev Event loss " + str(avg_event_loss_dev_val) + 
+        ", Dev Time loss " + str(avg_time_loss_dev_val))
         
 
 
     pickle.dump({'results': results, 
-                 'args': {'learning_rate': learning_rate, 'max_epochs': max_epochs, 'batch_size': batch_size, 'K': K, 'hidden_size': hidden_size }}, 
-                  open(saves_path+"/losses.pkl", 'wb'))
+                 'args': {
+                     'learning_rate': learning_rate, 
+                     'max_epochs': max_epochs, 
+                     'batch_size': batch_size, 
+                     'K': K, 
+                     'hidden_size': hidden_size 
+                    }
+                }, 
+                open(saves_path+"/losses.pkl", 'wb'))
     handlers = logger.handlers[:]
     for handler in handlers:
         handler.close()
@@ -291,7 +307,7 @@ def train_model(train_samples, dev_samples, learning_rate,
 
 
 if __name__ == "__main__":
-    dir_name = "data/data_retweet"
+    dir_name = "data/data_hawkes"
     train_pickle_path = dir_name + "/train.pkl"
     dev_pickle_path = dir_name + "/dev.pkl"
     
@@ -300,21 +316,25 @@ if __name__ == "__main__":
 
     max_epochs = 20
     learning_rates = [
-    #    0.001, 
+       0.001, 
        0.0001,
-    #    0.00001,
+       0.00001,
     ]
     epochs_per_save = 5
     batch_sizes = [
-        # 128,
+        32,
+        64,
+        128,
         256,
-        512,
-        ]
+        # 512,
+ #       1024,
+ #       2048
+    ]
     hidden_sizes = [
-#        32, 
-       128, 
-       256,
-       512
+        32, 
+        128, 
+        # 256,
+        # 512
     ]
     seed_val = 23
     random.seed(seed_val)
